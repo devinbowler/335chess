@@ -1,14 +1,25 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-#include <game_logic.ino>
+#include <Keypad.h>
+byte rows[4] = {4, 5, 6, 7};//connect to the row pinouts of the keypad
+byte cols[4] = {8, 9, 10, 11};//connect to the column pinouts of the keypad 
 
+char keys[4][4] = { //create 2D array for keys
+  {'1', '2', '3', 'A'},
+  {'4', '5', '6', 'B'},
+  {'7', '8', '9', 'C'},
+  {'*', '0', '#', 'D'},
+
+};
+
+Keypad mykeypad = Keypad(makeKeymap(keys), rows, cols, 4, 4);//initialize an instance of class NewKeypad
 // Initialize the PWM driver with the default I2C address (0x40)
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 // Define motor channels
 const int firstArmChannel = 0;    // Channel 0 on PCA9685
 const int secondArmChannel = 1;   // Channel 1 on PCA9685
-const int pullyMotorChannel = 2;  // Channel 2 on PCA9685 (used for sweeping)
+const int pullyMotorChannel = 2;  // Channel 2 on PCA9685 (not used in testing)
 
 // Define adjusted minimum and maximum pulse lengths for the motors
 const int firstArmMin = 200; // Adjusted minimum for motor 0 to skip dead zone
@@ -17,15 +28,14 @@ const int firstArmMax = 520; // Adjusted maximum for motor 0 (80% range)
 const int secondArmMin = 100; // Adjusted minimum for motor 1 to skip dead zone
 const int secondArmMax = 450; // Adjusted maximum for motor 1 (70% range)
 
-const int pullyMotorMin = 0;   // Adjusted minimum for motor 2
-const int pullyMotorMax = 750; // Adjusted maximum for motor 2 (restricted to safe range)
+const int pullyMotorMin = 50;    // Adjusted minimum for motor 2
+const int pullyMotorMax = 800; // Increased maximum for motor 2 to ensure full lowering
+
+// Define the pin for the electromagnet
+const int electromagnetPin = 3;   // Digital Pin D3
 
 // Define the pin for the emergency stop button
 const int stopButtonPin = 2; // Digital Pin D2
-
-// Define LED pins for status indicators (optional)
-const int greenLEDPin = 3; // Digital Pin D3
-const int redLEDPin = 4;   // Digital Pin D4
 
 // Flag to track the state of the emergency stop
 volatile bool emergencyStop = false;
@@ -36,32 +46,19 @@ struct Position {
   int y;
 };
 
-// Define a 7x7 chessboard grid with coordinate pairs
-// Each Position corresponds to a square on the chessboard
-// Row 0 is the Bottom Row, Column 0 is the Rightmost Column
-const int GRID_SIZE = 7;
-const Position chessBoard[GRID_SIZE][GRID_SIZE] = {
-  // Row 0 (Bottom Row)
-  { {307, 541}, {345, 520}, {383, 499}, {421, 478}, {459, 457}, {497, 436}, {535, 415} },
-  
-  // Row 1
-  { {307, 480}, {345, 459}, {383, 438}, {421, 417}, {459, 396}, {497, 375}, {535, 354} },
-  
-  // Row 2
-  { {307, 419}, {345, 398}, {383, 377}, {421, 356}, {459, 335}, {497, 314}, {535, 293} },
-  
-  // Row 3 (Middle Row)
-  { {307, 358}, {345, 337}, {383, 316}, {421, 295}, {459, 274}, {497, 253}, {535, 232} },
-  
-  // Row 4
-  { {307, 297}, {345, 276}, {383, 255}, {421, 234}, {459, 213}, {497, 192}, {535, 171} },
-  
-  // Row 5
-  { {307, 236}, {345, 215}, {383, 194}, {421, 173}, {459, 152}, {497, 131}, {535, 110} },
-  
-  // Row 6 (Top Row)
-  { {307, 175}, {345, 154}, {383, 133}, {421, 112}, {459, 91},  {497, 70},  {535, 49} }
+// 8x8 chessboard grid with coordinate pairs
+const Position chessBoard[8][8] = {
+  { {307,541}, {340,525}, {365,513}, {390,490}, {410,470}, {430,450}, {450,425}, {470,400} },
+  { {295,530}, {325,510}, {350,495}, {375,475}, {395,455}, {420,435}, {438,410}, {460,380} },
+  { {288,513}, {318,495}, {343,475}, {368,458}, {388,438}, {418,418}, {434,393}, {458,358} },
+  { {290,497}, {317,475}, {348,458}, {363,445}, {385,430}, {405,405}, {428,377}, {453,347} },
+  { {285,477}, {297,455}, {323,430}, {345,415}, {365,400}, {405,380}, {410,360}, {450,320} },
+  { {247,486}, {265,450}, {290,423}, {315,415}, {335,395}, {380,375}, {390,350}, {420,300} },
+  { {235,475}, {250,435}, {275,405}, {300,400}, {320,380}, {370,360}, {378,335}, {410,280} },
+  { {223,464}, {235,420}, {260,387}, {285,385}, {305,365}, {360,345}, {366,320}, {400,260} }
 };
+
+
 
 // Function to move a motor to its neutral position
 void moveToNeutral(int motorChannel, int minPulse, int maxPulse) {
@@ -74,97 +71,107 @@ void moveToNeutral(int motorChannel, int minPulse, int maxPulse) {
   delay(500); // Brief delay for stabilization
 }
 
+void pulleyToNeutral() {
+  // Directly set the pulley to the 'up' (neutral) position
+  movePullyMotor(pullyMotorMax);
+  delay(100);
+}
+
+
 // Function to stop all motors immediately
 void stopMotors() {
   pwm.setPWM(firstArmChannel, 0, 0);    // Stop firstArm
   pwm.setPWM(secondArmChannel, 0, 0);   // Stop secondArm
-  pwm.setPWM(pullyMotorChannel, 0, 0);  // Stop pullyMotor
+  pwm.setPWM(pullyMotorChannel, 0, 0);  // Stop pullyMotor (not in use)
   Serial.println("All motors stopped due to emergency stop.");
-  
-  // Update LEDs to indicate emergency stop (optional)
-  digitalWrite(greenLEDPin, LOW);
-  digitalWrite(redLEDPin, HIGH);
 }
+
+// Function to move the pully motor to a specific pulse
+void movePullyMotor(int pulse) {
+  // Validate pulse range
+  if (pulse < pullyMotorMin) pulse = pullyMotorMin;
+  if (pulse > pullyMotorMax) pulse = pullyMotorMax;
+
+  pwm.setPWM(pullyMotorChannel, 0, pulse);
+  Serial.print("Pully Motor Pulse: ");
+  Serial.println(pulse);
+}
+
+void raisePullyMotor() {
+  // If pullyMotorMin = up, pullyMotorMax = down, we move from min to max
+  Serial.println("Raising pulley...");
+  for (int p = pullyMotorMin; p <= pullyMotorMax; p += 10) {
+    if (emergencyStop) { stopMotors(); return; }
+    movePullyMotor(p);
+    delay(50);
+  }
+  movePullyMotor(pullyMotorMax);
+  Serial.println("Reached down position.");
+  delay(500);
+}
+
+void dropPullyMotor() {
+  // If pullyMotorMin = up, pullyMotorMax = down, raise goes from max to min
+  Serial.println("Dropping pulley...");
+  for (int p = pullyMotorMax; p >= pullyMotorMin; p -= 10) {
+    if (emergencyStop) { stopMotors(); return; }
+    movePullyMotor(p);
+    delay(50);
+  }
+  movePullyMotor(pullyMotorMin);
+  Serial.println("Reached up position.");
+  delay(500);
+}
+
+
 
 // Function to move motors to a specific (x, y) position
-void moveMotorsTo(int x, int y) {
-  // Validate motor pulse ranges
-  if (x < firstArmMin || x > firstArmMax) {
-    Serial.println("Error: X position out of range!");
-    return;
-  }
-  if (y < secondArmMin || y > secondArmMax) {
-    Serial.println("Error: Y position out of range!");
-    return;
-  }
+void moveMotorsTo(int targetX, int targetY) {
+  // Get the current position of each motor
+  static int currentX = (firstArmMin + firstArmMax) / 2; // Assume neutral position as the starting position
+  static int currentY = (secondArmMin + secondArmMax) / 2; // Assume neutral position as the starting position
 
-  // Set PWM for firstArm (X-axis) motor
-  pwm.setPWM(firstArmChannel, 0, x); // Adjust Channel if necessary
-  // Set PWM for secondArm (Y-axis) motor
-  pwm.setPWM(secondArmChannel, 0, y); // Adjust Channel if necessary
-  
-  Serial.print("Moved to Position - X: ");
-  Serial.print(x);
+  int stepX = (currentX < targetX) ? 20 : -20; // Smaller step for slower sweep
+  int stepY = (currentY < targetY) ? 20 : -20; // Smaller step for slower sweep
+
+  Serial.print("Moving motors to Target Position - X: ");
+  Serial.print(targetX);
   Serial.print(", Y: ");
-  Serial.println(y);
-  
-  // Optional: Add a delay to allow motors to reach the position
-  delay(500); // 500 milliseconds
-}
+  Serial.println(targetY);
 
-// Function to sweep the pully motor from min to max and back
-void sweepPullyMotor() {
-  Serial.println("Starting sweep of Pully Motor...");
-
-  // Sweep from minimum to maximum pulse
-  for (int pulse = pullyMotorMin; pulse <= pullyMotorMax; pulse += 10) { // Increment by 10 for smoother sweep
-    if (emergencyStop) { // Check for emergency stop during the sweep
-      Serial.println("Emergency stop detected during sweep! Halting sweep.");
+  // Loop until both X and Y reach their target positions
+  while (currentX != targetX || currentY != targetY) {
+    if (emergencyStop) {
+      Serial.println("Emergency stop detected! Halting motor movement.");
       stopMotors();
-      return; // Exit the sweep function
+      return; // Exit the function immediately
     }
 
-    // Validate pulse range
-    if (pulse < pullyMotorMin || pulse > pullyMotorMax) {
-      Serial.print("Invalid pulse detected: ");
-      Serial.println(pulse);
-      break; // Exit sweep to prevent over-driving
+    // Sweep the X motor
+    if (currentX != targetX) {
+      currentX += stepX;
+      if ((stepX > 0 && currentX > targetX) || (stepX < 0 && currentX < targetX)) {
+        currentX = targetX;
+      }
+      pwm.setPWM(firstArmChannel, 0, currentX);
     }
 
-    pwm.setPWM(pullyMotorChannel, 0, pulse);
-    Serial.print("Pully Motor Pulse: ");
-    Serial.println(pulse);
-    delay(100); // Adjust delay for sweep speed
+    // Sweep the Y motor
+    if (currentY != targetY) {
+      currentY += stepY;
+      if ((stepY > 0 && currentY > targetY) || (stepY < 0 && currentY < targetY)) {
+        currentY = targetY;
+      }
+      pwm.setPWM(secondArmChannel, 0, currentY);
+    }
+
+    delay(100); // Delay to control the sweep speed (100ms for slower sweep)
   }
 
-  // Pause at maximum position
-  Serial.println("Pully Motor reached maximum position. Pausing...");
-  delay(1000); // 1 second pause
-
-  // Sweep back from maximum to minimum pulse
-  for (int pulse = pullyMotorMax; pulse >= pullyMotorMin; pulse -= 10) { // Decrement by 10 for smoother sweep
-    if (emergencyStop) { // Check for emergency stop during the sweep
-      Serial.println("Emergency stop detected during sweep! Halting sweep.");
-      stopMotors();
-      return; // Exit the sweep function
-    }
-
-    // Validate pulse range
-    if (pulse < pullyMotorMin || pulse > pullyMotorMax) {
-      Serial.print("Invalid pulse detected: ");
-      Serial.println(pulse);
-      break; // Exit sweep to prevent over-driving
-    }
-
-    pwm.setPWM(pullyMotorChannel, 0, pulse);
-    Serial.print("Pully Motor Pulse: ");
-    Serial.println(pulse);
-    delay(100); // Adjust delay for sweep speed
-  }
-
-  // Pause at minimum position
-  Serial.println("Pully Motor returned to minimum position. Sweep complete.");
-  delay(1000); // 1 second pause
+  Serial.print("Moved to Position - X: ");
+  Serial.print(currentX);
+  Serial.print(", Y: ");
+  Serial.println(currentY);
 }
 
 // Interrupt Service Routine for Emergency Stop
@@ -189,10 +196,10 @@ bool isWhiteTurn = true; // Track player turn
 
 // Helper function to convert keypad input to board indices
 void parseMove(const String &input, int &fromRow, int &fromCol, int &toRow, int &toCol) {
-  fromRow = input[0] - '1';
-  fromCol = input[1] - '1';
-  toRow = input[2] - '1';
-  toCol = input[3] - '1';
+  fromRow = input[0];
+  fromCol = input[1];
+  toRow = input[2];
+  toCol = input[3];
 }
 
 // Function to check if a move is valid (basic validation, extendable for full rules)
@@ -251,16 +258,12 @@ void setup() {
   pwm.setOscillatorFrequency(27000000); // Set the oscillator frequency (27MHz for Adafruit boards)
   pwm.setPWMFreq(60); // Set PWM frequency to 60Hz (adjust as needed)
 
+  // Initialize the electromagnet pin as OUTPUT early
+  pinMode(electromagnetPin, OUTPUT);
+  digitalWrite(electromagnetPin, LOW); // Ensure electromagnet is off initially
+
   // Initialize the emergency stop button pin with internal pull-up resistor
   pinMode(stopButtonPin, INPUT_PULLUP);
-  
-  // Initialize LED pins (optional)
-  pinMode(greenLEDPin, OUTPUT);
-  pinMode(redLEDPin, OUTPUT);
-  
-  // Set initial LED states (optional)
-  digitalWrite(greenLEDPin, HIGH); // Green LED on: normal operation
-  digitalWrite(redLEDPin, LOW);    // Red LED off
   
   // Attach interrupt to the emergency stop button
   attachInterrupt(digitalPinToInterrupt(stopButtonPin), handleEmergencyStop, FALLING);
@@ -269,7 +272,7 @@ void setup() {
   Serial.println("Moving motors to neutral positions...");
   moveToNeutral(firstArmChannel, firstArmMin, firstArmMax);
   moveToNeutral(secondArmChannel, secondArmMin, secondArmMax);
-  moveToNeutral(pullyMotorChannel, pullyMotorMin, pullyMotorMax);
+  pulleyToNeutral();
   
   Serial.println("Motors initialized to neutral positions. Starting traversal of Bottom Row.");
   
@@ -300,13 +303,81 @@ void setup() {
   Serial.println("Sweep complete. Ready for manual testing.");
   delay(1000); // Brief pause before entering loop
   Serial.println("White's turn.");
+  Serial.println("Motors initialized to neutral positions. Starting pick and place sequence.");
+  delay(1000); // Brief pause before starting
+
+    // ----- Row Testing Sequence -----
+  // Choose a specific row to test
+  int testRow = 4; 
+
+  for (int col = 0; col < 8; col++) {
+    int targetX = chessBoard[testRow][col].x;
+    int targetY = chessBoard[testRow][col].y;
+
+    // If this position is (0,0) and you want to skip it, you can do:
+    if (targetX == 0 && targetY == 0) {
+      Serial.print("Skipping empty coordinate at col ");
+      Serial.println(col);
+      continue;
+    }
+
+    Serial.print("Moving to Row ");
+    Serial.print(testRow);
+    Serial.print(", Col ");
+    Serial.print(col);
+    Serial.print(": X=");
+    Serial.print(targetX);
+    Serial.print(", Y=");
+    Serial.println(targetY);
+
+    // Move to the coordinate
+    moveMotorsTo(targetX, targetY);
+
+    // Wait 5 seconds before moving to the next coordinate
+    delay(5000);
+  }
+
+  // ----- Pick-Up Sequence -----
+  /* Move to piece
+  moveMotorsTo(chessBoard[2][2].x, chessBoard[2][2].y);
+
+  // Lower the pulley (down)
+  dropPullyMotor();
+
+  // Magnet on (pick piece)
+  digitalWrite(electromagnetPin, HIGH);
+  delay(500);
+
+  // Raise pulley (up) before moving
+  raisePullyMotor();
+  delay(500); // Ensure it's fully raised before moving
+
+  // Move to target
+  moveMotorsTo(chessBoard[0][0].x, chessBoard[0][0].y);
+
+  // Lower the pulley to place piece
+  dropPullyMotor();
+
+  // Release magnet
+  digitalWrite(electromagnetPin, LOW);
+  delay(500);
+
+  // Raise pulley again
+  raisePullyMotor();
+
+  // Move back to neutral
+  moveToNeutral(firstArmChannel, firstArmMin, firstArmMax);
+  moveToNeutral(secondArmChannel, secondArmMin, secondArmMax);
+  pulleyToNeutral();
+  */
 }
 
 void loop() {
-  // Check the state of the emergency stop button
+  // Continuously check the state of the emergency stop button
   if (emergencyStop) { // Emergency stop activated
     Serial.println("Emergency stop activated!");
     stopMotors(); // Immediately stop all motors
+    digitalWrite(electromagnetPin, LOW); // Ensure electromagnet is off
     // Halt further execution
     while (true) {
       // Optionally, you can add visual or auditory indicators here
@@ -366,5 +437,7 @@ void loop() {
 
   // Keep the loop running without doing anything else
   // This prevents the loop from exiting and allows continuous testing
+
+  // No other actions in loop; sequence runs once in setup()
   delay(100); // Short delay to prevent rapid looping
 }
