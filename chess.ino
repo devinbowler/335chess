@@ -1,6 +1,5 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-#include <game_logic.ino>
 #include <Keypad.h>
 byte rows[4] = {4, 5, 6, 7};//connect to the row pinouts of the keypad
 byte cols[4] = {8, 9, 10, 11};//connect to the column pinouts of the keypad 
