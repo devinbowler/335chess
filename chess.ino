@@ -209,6 +209,33 @@ void handleKeypadInput() {
   }
 }
 
+// Function to check if a square already has a piece
+bool hasPiece(int row, int col) {
+  return board[row][col] != ' ';
+}
+
+// Function to handle removing an existing piece and placing it in a side location
+void removeAndPlacePiece(int row, int col) {
+  // Move to the existing piece's location
+  moveMotorsTo(chessBoard[row][col].x, chessBoard[row][col].y);
+  // Lower the pulley to pick up the piece
+  dropPullyMotor();
+  // Activate the electromagnet to pick up the piece
+  digitalWrite(electromagnetPin, HIGH);
+  delay(500); // Ensure piece is secured
+  // Raise the pulley
+  raisePullyMotor();
+  delay(500);
+  // Move to the side location
+  moveToNeutral(0, firstArmMin, firstArmMax);
+  moveToNeutral(1, secondArmMin, secondArmMax);
+  // Deactivate the electromagnet to release the piece
+  digitalWrite(electromagnetPin, LOW);
+  delay(500);
+  // Update the board to reflect the removed piece
+  board[row][col] = ' '; // Set the square to empty
+}
+
 // Game logic integration
 void parseMove(const String &input, int &fromRow, int &fromCol, int &toRow, int &toCol) {
   fromRow = input[0] - '1';
@@ -222,17 +249,6 @@ bool isValidMove(int fromRow, int fromCol, int toRow, int toCol) {
       toRow < 0 || toRow >= SIZE || toCol < 0 || toCol >= SIZE) {
     return false;
   }
-
-  char piece = board[fromRow][fromCol];
-  if ((isWhiteTurn && islower(piece)) || (!isWhiteTurn && isupper(piece))) {
-    return false;
-  }
-
-  char destination = board[toRow][toCol];
-  if ((isWhiteTurn && isupper(destination)) || (!isWhiteTurn && islower(destination))) {
-    return false;
-  }
-
   return true;
 }
 
@@ -241,20 +257,27 @@ void updateBoard(int fromRow, int fromCol, int toRow, int toCol) {
   board[fromRow][fromCol] = ' ';
 }
 
+// Updated function to handle a move with collision checking
 void handleTurn(const String &input) {
   int fromRow, fromCol, toRow, toCol;
   parseMove(input, fromRow, fromCol, toRow, toCol);
-
   if (isValidMove(fromRow, fromCol, toRow, toCol)) {
+    // Check if the target square already has a piece
+    if (hasPiece(toRow, toCol)) {
+      Serial.println("Capturing existing piece...");
+      removeAndPlacePiece(toRow, toCol);
+    }
+    // Move the new piece to the target square
     updateBoard(fromRow, fromCol, toRow, toCol);
-
+    // Move to the original piece's location
     moveMotorsTo(chessBoard[fromRow][fromCol].x, chessBoard[fromRow][fromCol].y);
     delay(1000); // Simulate pickup
     raisePullyMotor();
+    // Move to the target square
     moveMotorsTo(chessBoard[toRow][toCol].x, chessBoard[toRow][toCol].y);
     delay(1000); // Simulate drop-off
     dropPullyMotor();
-
+    // Toggle the turn
     isWhiteTurn = !isWhiteTurn;
     Serial.println("Move executed successfully.");
   } else {
