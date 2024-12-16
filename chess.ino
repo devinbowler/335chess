@@ -1,5 +1,6 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <game_logic.ino>
 
 // Initialize the PWM driver with the default I2C address (0x40)
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
@@ -171,6 +172,75 @@ void handleEmergencyStop() {
   emergencyStop = true;
 }
 
+// Chessboard representation
+const int SIZE = 8; // Chessboard is 8x8
+char board[SIZE][SIZE] = {
+  {'R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'},
+  {'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'},
+  {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
+  {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
+  {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
+  {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
+  {'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'},
+  {'r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'}
+};
+
+bool isWhiteTurn = true; // Track player turn
+
+// Helper function to convert keypad input to board indices
+void parseMove(const String &input, int &fromRow, int &fromCol, int &toRow, int &toCol) {
+  fromRow = input[0] - '1';
+  fromCol = input[1] - '1';
+  toRow = input[2] - '1';
+  toCol = input[3] - '1';
+}
+
+// Function to check if a move is valid (basic validation, extendable for full rules)
+bool isValidMove(int fromRow, int fromCol, int toRow, int toCol) {
+  // Ensure the move is within bounds
+  if (fromRow < 0 || fromRow >= GRID_SIZE || fromCol < 0 || fromCol >= GRID_SIZE ||
+      toRow < 0 || toRow >= GRID_SIZE || toCol < 0 || toCol >= GRID_SIZE) {
+    return false;
+  }
+  // Ensure the piece belongs to the current player
+  char piece = board[fromRow][fromCol];
+  if ((isWhiteTurn && piece >= 'a' && piece <= 'z') || (!isWhiteTurn && piece >= 'A' && piece <= 'Z')) {
+    return false;
+  }
+  // Ensure the destination is valid (not occupied by same color)
+  char destination = board[toRow][toCol];
+  if ((isWhiteTurn && destination >= 'A' && destination <= 'Z') || (!isWhiteTurn && destination >= 'a' && destination <= 'z')) {
+    return false;
+  }
+  return true;
+}
+
+// Function to update the board state after a valid move
+void updateBoard(int fromRow, int fromCol, int toRow, int toCol) {
+  board[toRow][toCol] = board[fromRow][fromCol];
+  board[fromRow][fromCol] = ' ';
+}
+
+// Function to handle a player's turn
+void handleTurn(const String &input) {
+  int fromRow, fromCol, toRow, toCol;
+  parseMove(input, fromRow, fromCol, toRow, toCol);
+
+  if (isValidMove(fromRow, fromCol, toRow, toCol)) {
+    updateBoard(fromRow, fromCol, toRow, toCol);
+    // Move the robot arm
+    moveMotorsTo(chessBoard[fromRow][fromCol].x, chessBoard[fromRow][fromCol].y);
+    delay(1000); // Simulate pickup
+    moveMotorsTo(chessBoard[toRow][toCol].x, chessBoard[toRow][toCol].y);
+    delay(1000); // Simulate drop-off
+
+    // Switch turns
+    isWhiteTurn = !isWhiteTurn;
+  } else {
+    Serial.println("Invalid move!");
+  }
+}
+
 void setup() {
   // Initialize Serial Monitor for debugging
   Serial.begin(9600);
@@ -229,6 +299,7 @@ void setup() {
   
   Serial.println("Sweep complete. Ready for manual testing.");
   delay(1000); // Brief pause before entering loop
+  Serial.println("White's turn.");
 }
 
 void loop() {
@@ -241,7 +312,15 @@ void loop() {
       // Optionally, you can add visual or auditory indicators here
     }
   }
-
+  // Simulated input for testing
+  if (Serial.available() > 0) {
+    String input = Serial.readStringUntil('\n');
+    if (input.length() == 4) {
+      handleTurn(input);
+    } else {
+      Serial.println("Invalid input.");
+    }
+  }
   // The traversal loop is commented out to allow individual testing
   /*
   if (!emergencyStop) {
