@@ -180,6 +180,88 @@ void handleEmergencyStop() {
   emergencyStop = true;
 }
 
+// Keypad input handling
+String keypadInput = "";
+
+void handleKeypadInput() {
+  char key = myKeypad.getKey();
+
+  if (key) {
+    if (key == '*') { // Confirm key
+      if (keypadInput.length() == 4) {
+        handleTurn(keypadInput);
+        keypadInput = "";
+      } else {
+        Serial.println("Invalid input length. Enter 4 digits.");
+      }
+    } else if (key == '#') { // Clear key
+      keypadInput = "";
+      Serial.println("Input cleared.");
+    } else if (isdigit(key)) {
+      if (keypadInput.length() < 4) {
+        keypadInput += key;
+        Serial.print("Keypad input: ");
+        Serial.println(keypadInput);
+      } else {
+        Serial.println("Input already 4 digits. Press * to confirm or # to clear.");
+      }
+    }
+  }
+}
+
+// Game logic integration
+void parseMove(const String &input, int &fromRow, int &fromCol, int &toRow, int &toCol) {
+  fromRow = input[0] - '1';
+  fromCol = input[1] - '1';
+  toRow = input[2] - '1';
+  toCol = input[3] - '1';
+}
+
+bool isValidMove(int fromRow, int fromCol, int toRow, int toCol) {
+  if (fromRow < 0 || fromRow >= SIZE || fromCol < 0 || fromCol >= SIZE ||
+      toRow < 0 || toRow >= SIZE || toCol < 0 || toCol >= SIZE) {
+    return false;
+  }
+
+  char piece = board[fromRow][fromCol];
+  if ((isWhiteTurn && islower(piece)) || (!isWhiteTurn && isupper(piece))) {
+    return false;
+  }
+
+  char destination = board[toRow][toCol];
+  if ((isWhiteTurn && isupper(destination)) || (!isWhiteTurn && islower(destination))) {
+    return false;
+  }
+
+  return true;
+}
+
+void updateBoard(int fromRow, int fromCol, int toRow, int toCol) {
+  board[toRow][toCol] = board[fromRow][fromCol];
+  board[fromRow][fromCol] = ' ';
+}
+
+void handleTurn(const String &input) {
+  int fromRow, fromCol, toRow, toCol;
+  parseMove(input, fromRow, fromCol, toRow, toCol);
+
+  if (isValidMove(fromRow, fromCol, toRow, toCol)) {
+    updateBoard(fromRow, fromCol, toRow, toCol);
+
+    moveMotorsTo(chessBoard[fromRow][fromCol].x, chessBoard[fromRow][fromCol].y);
+    delay(1000); // Simulate pickup
+    raisePullyMotor();
+    moveMotorsTo(chessBoard[toRow][toCol].x, chessBoard[toRow][toCol].y);
+    delay(1000); // Simulate drop-off
+    dropPullyMotor();
+
+    isWhiteTurn = !isWhiteTurn;
+    Serial.println("Move executed successfully.");
+  } else {
+    Serial.println("Invalid move.");
+  }
+}
+
 void setup() {
   // Initialize Serial Monitor for debugging
   Serial.begin(9600);
@@ -286,7 +368,7 @@ void loop() {
       // Optionally, you can add visual or auditory indicators here
     }
   }
-
+  handleKeypadInput();
   // No other actions in loop; sequence runs once in setup()
   delay(100); // Short delay to prevent rapid looping
 }
