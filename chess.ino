@@ -1,6 +1,19 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <game_logic.ino>
+#include <Keypad.h>
+byte rows[4] = {4, 5, 6, 7};//connect to the row pinouts of the keypad
+byte cols[4] = {8, 9, 10, 11};//connect to the column pinouts of the keypad 
 
+char keys[4][4] = { //create 2D array for keys
+  {'1', '2', '3', 'A'},
+  {'4', '5', '6', 'B'},
+  {'7', '8', '9', 'C'},
+  {'*', '0', '#', 'D'},
+
+};
+
+Keypad mykeypad = Keypad(makeKeymap(keys), rows, cols, 4, 4);//initialize an instance of class NewKeypad
 // Initialize the PWM driver with the default I2C address (0x40)
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
